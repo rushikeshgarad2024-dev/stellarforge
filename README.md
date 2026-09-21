@@ -338,7 +338,6 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) to get started. Areas where we especiall
 | Channel | Purpose |
 |---|---|
 | [GitHub Discussions](https://github.com/0xLizTech/stellarforge/discussions) | Architecture, proposals, Q&A |
-| [Twitter/X](https://twitter.com/stellarforge_io) | Announcements |
 
 ---
 
