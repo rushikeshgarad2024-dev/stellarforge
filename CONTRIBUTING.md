@@ -386,7 +386,6 @@ Contributors are recognized in:
 
 - The `CHANGELOG.md` for the release they contributed to.
 - The GitHub contributors graph.
-- Our Discord `#contributors` channel shoutouts.
 
 Significant contributors (multiple merged PRs or major features) will be invited to join the `stellarforge-contributors` GitHub team, which grants write access to non-main branches and the ability to review PRs.
 

@@ -3,7 +3,6 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Contracts CI](https://github.com/0xLizTech/stellarforge/actions/workflows/contracts-ci.yml/badge.svg)](https://github.com/0xLizTech/stellarforge/actions/workflows/contracts-ci.yml)
 [![SDK CI](https://github.com/0xLizTech/stellarforge/actions/workflows/sdk-ci.yml/badge.svg)](https://github.com/0xLizTech/stellarforge/actions/workflows/sdk-ci.yml)
-[![Discord](https://img.shields.io/discord/placeholder?label=Discord&logo=discord)](https://discord.gg/stellarforge)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 > **Institutional-grade Real World Asset tokenization on Stellar/Soroban.**
@@ -339,7 +338,6 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) to get started. Areas where we especiall
 | Channel | Purpose |
 |---|---|
 | [GitHub Discussions](https://github.com/0xLizTech/stellarforge/discussions) | Architecture, proposals, Q&A |
-| [Discord](https://discord.gg/stellarforge) | Real-time chat, dev support |
 | [Twitter/X](https://twitter.com/stellarforge_io) | Announcements |
 
 ---
