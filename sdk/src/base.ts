@@ -58,7 +58,7 @@ export interface SubmitOutcome {
 export abstract class ContractClient {
   protected readonly server: rpc.Server;
   protected readonly contract: Contract;
-  protected readonly config: StellarForgeConfig;
+  protected readonly clientConfig: StellarForgeConfig;
 
   /**
    * @param contractId - Deployed contract address, from `config.contracts`.
@@ -81,7 +81,7 @@ export abstract class ContractClient {
     if (!contractId) {
       throw new Error(`contracts.${configKey} address is required`);
     }
-    this.config = config;
+    this.clientConfig = config;
     this.server = new rpc.Server(config.rpcUrl, { allowHttp: false });
     this.contract = new Contract(contractId);
   }
@@ -95,7 +95,7 @@ export abstract class ContractClient {
 
     const tx = new TransactionBuilder(dummyAccount, {
       fee: BASE_FEE,
-      networkPassphrase: this.config.networkPassphrase,
+      networkPassphrase: this.clientConfig.networkPassphrase,
     })
       .addOperation(this.contract.call(method, ...args))
       .setTimeout(SIMULATION_TIMEOUT_SECONDS)
@@ -130,7 +130,7 @@ export abstract class ContractClient {
 
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
-      networkPassphrase: this.config.networkPassphrase,
+      networkPassphrase: this.clientConfig.networkPassphrase,
     })
       .addOperation(this.contract.call(method, ...args))
       .setTimeout(WRITE_TX_TIMEOUT_SECONDS)
@@ -155,7 +155,7 @@ export abstract class ContractClient {
     source: string,
     sponsored = false,
   ): Promise<SubmitOutcome> {
-    const secret = this.config.signerSecret;
+    const secret = this.clientConfig.signerSecret;
     if (!secret) {
       throw new Error(
         "config.signerSecret is required to submit a transaction. " +
@@ -269,7 +269,7 @@ export abstract class ContractClient {
   ): Promise<SponsoredTransaction> {
     const transaction = new TransactionBuilder(await this.server.getAccount(feeSource), {
       fee: BASE_FEE,
-      networkPassphrase: this.config.networkPassphrase,
+      networkPassphrase: this.clientConfig.networkPassphrase,
     })
       .addOperation(this.contract.call(method, ...args))
       .setTimeout(WRITE_TX_TIMEOUT_SECONDS)
@@ -335,7 +335,7 @@ export abstract class ContractClient {
     const { func } = transaction.operations[0] as unknown as { func: xdr.HostFunction };
     const withAuth = new TransactionBuilder(await this.server.getAccount(transaction.source), {
       fee: BASE_FEE,
-      networkPassphrase: this.config.networkPassphrase,
+      networkPassphrase: this.clientConfig.networkPassphrase,
     })
       .addOperation(Operation.invokeHostFunction({ func, auth: [...signedEntries] }))
       .setTimeout(WRITE_TX_TIMEOUT_SECONDS)

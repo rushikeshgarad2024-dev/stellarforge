@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A report may move the price at most the asset's `max_deviation_bps`. A larger move needs the admin's `override_price`, which publishes its own event.
   - Staleness is left to the consumer, as SEP-40 specifies.
   - Not yet in `scripts/deploy.sh` or the SDK.
+- `VaultClient` in `@stellarforge-protocol/sdk` for interacting with the Phase 2 Vault contract (#63):
+  - Typed read and write methods matching the vault contract interface (`config`, `underlyingHeld`, `balance`, `totalSupply`, `allowance`, `decimals`, `name`, `symbol`, `lockedUntil`, `redeemable`, `paused`, `admin`, `oracles`, `nav`, `navPerShare`, `balanceAt`, `totalSupplyAt`; `deposit`, `redeem`, `transfer`, `approve`, `transferFrom`, `setPaused`, `setOracles`).
+  - Sponsored write methods (`buildSponsoredDepositTx`, `buildSponsoredRedeemTx`, `buildSponsoredTransferTx`, `buildSponsoredTransferFromTx`) with recursive multi-contract auth-tree verification (`checkInvocationTree`), detecting and preventing any tampering of root invocations, nested child invocations (such as underlying token transfers), contracts, function names, or arguments.
+  - `describeAuthTree`: human-readable call tree string formatter for user consent and logging.
+  - Pure rounding and lockup helpers (`sharesForDeposit`, `underlyingForRedeem`, `maxRedeemable`) verified against a 50+ test-case suite.
+  - Typed event decoders (`decodeVaultEvent`, `decodeVaultEvents`) parsing raw RPC events and transaction results into strongly typed event union types (`deposit`, `redeem`, `nav_update`, `lock_period_set`, `emergency_paused`, `oracle_changed`, `admin_transfer`).
+  - Structured error types (`VaultError`, `VaultErrorCode`, `NavRefusalError`).
 - `docs/audits/external-audit-handover-phase1.md`, the handover for the Phase 1 external audit. It covers scope, how to rebuild the audited wasm, the trust model, the invariants to test, the deliberate design choices, and how the PRD relates to Phase 1.
 
 ### Changed

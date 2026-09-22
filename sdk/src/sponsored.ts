@@ -1,4 +1,4 @@
-import { Address, authorizeEntry, xdr } from "@stellar/stellar-sdk";
+import { Address, authorizeEntry, scValToNative, xdr } from "@stellar/stellar-sdk";
 
 import type { Keypair, Transaction } from "@stellar/stellar-sdk";
 
@@ -130,6 +130,170 @@ export function authEntriesFromXdr(encoded: readonly string[]): xdr.SorobanAutho
 }
 
 /**
+ * Recursively verifies that `signed` matches `original` throughout the entire
+ * authorization invocation tree: contract address, function name, arguments,
+ * and all sub-invocations. Refuses any difference with an error naming the differing node.
+ */
+export function checkInvocationTree(
+  original: xdr.SorobanAuthorizedInvocation,
+  signed: xdr.SorobanAuthorizedInvocation,
+  nodePath = "rootInvocation",
+): void {
+  const origFn = original.function;
+  const signedFn = signed.function;
+
+  if (origFn.type !== signedFn.type) {
+    throw new Error(
+      `Authorization tree differs at ${nodePath}: function type mismatch (expected ${origFn.type}, got ${signedFn.type})`,
+    );
+  }
+
+  if (origFn.type === "sorobanAuthorizedFunctionTypeContractFn" && signedFn.type === "sorobanAuthorizedFunctionTypeContractFn") {
+    const origContractFn = origFn.contractFn;
+    const signedContractFn = signedFn.contractFn;
+
+    if (!origContractFn.contractAddress.equals(signedContractFn.contractAddress)) {
+      const expectedAddr = Address.fromScAddress(origContractFn.contractAddress).toString();
+      const actualAddr = Address.fromScAddress(signedContractFn.contractAddress).toString();
+      throw new Error(
+        `Authorization tree differs at ${nodePath}.contractAddress: expected ${expectedAddr}, got ${actualAddr}`,
+      );
+    }
+
+    const origName = origContractFn.functionName.toString();
+    const signedName = signedContractFn.functionName.toString();
+    if (origName !== signedName) {
+      throw new Error(
+        `Authorization tree differs at ${nodePath}.functionName: expected "${origName}", got "${signedName}"`,
+      );
+    }
+
+    const origArgs = origContractFn.args;
+    const signedArgs = signedContractFn.args;
+    if (origArgs.length !== signedArgs.length) {
+      throw new Error(
+        `Authorization tree differs at ${nodePath}.args: count mismatch (expected ${origArgs.length}, got ${signedArgs.length})`,
+      );
+    }
+
+    for (let i = 0; i < origArgs.length; i++) {
+      const origArg = origArgs[i];
+      const signedArg = signedArgs[i];
+      if (origArg && signedArg && !origArg.equals(signedArg)) {
+        throw new Error(
+          `Authorization tree differs at ${nodePath}.args[${i}]: argument mismatch`,
+        );
+      }
+    }
+  } else if (!origFn.equals(signedFn)) {
+    throw new Error(`Authorization tree differs at ${nodePath}.function: function mismatch`);
+  }
+
+  const origSubs = original.subInvocations;
+  const signedSubs = signed.subInvocations;
+  if (origSubs.length !== signedSubs.length) {
+    throw new Error(
+      `Authorization tree differs at ${nodePath}.subInvocations: count mismatch (expected ${origSubs.length}, got ${signedSubs.length})`,
+    );
+  }
+
+  for (let i = 0; i < origSubs.length; i++) {
+    const origSub = origSubs[i];
+    const signedSub = signedSubs[i];
+    if (origSub && signedSub) {
+      checkInvocationTree(origSub, signedSub, `${nodePath}.subInvocations[${i}]`);
+    }
+  }
+}
+
+/**
+ * Formats a SorobanAuthorizedInvocation into a human-readable string.
+ */
+function describeInvocation(inv: xdr.SorobanAuthorizedInvocation, prefix = "", isLast = true): string[] {
+  const lines: string[] = [];
+  const fn = inv.function;
+  let callDesc = "unknown";
+
+  if (fn.type === "sorobanAuthorizedFunctionTypeContractFn") {
+    const contractFn = fn.contractFn;
+    const contractId = Address.fromScAddress(contractFn.contractAddress).toString();
+    const fnName = contractFn.functionName.toString();
+    const args = contractFn.args.map((arg) => {
+      try {
+        const native = scValToNative(arg);
+        if (typeof native === "bigint") return `${native.toString()}n`;
+        return JSON.stringify(native);
+      } catch {
+        return arg.toXdr("base64");
+      }
+    });
+    callDesc = `${contractId}.${fnName}(${args.join(", ")})`;
+  } else {
+    callDesc = fn.type;
+  }
+
+  const branch = isLast ? "└── " : "├── ";
+  lines.push(`${prefix}${branch}${callDesc}`);
+
+  const nextPrefix = prefix + (isLast ? "    " : "│   ");
+  const subInvs = inv.subInvocations;
+  for (let i = 0; i < subInvs.length; i++) {
+    const sub = subInvs[i];
+    if (sub) {
+      lines.push(...describeInvocation(sub, nextPrefix, i === subInvs.length - 1));
+    }
+  }
+
+  return lines;
+}
+
+/**
+ * Returns a human-readable tree representation of an authorization entry,
+ * enabling wallets and users to inspect the full multi-contract call tree before signing.
+ *
+ * @param entry - The authorization entry to describe.
+ * @returns Human-readable formatted string representing authorizer and invocation tree.
+ */
+export function describeAuthTree(entry: xdr.SorobanAuthorizationEntry): string {
+  const authorizer = authEntryAddress(entry) ?? "source account";
+  const lines: string[] = [`Authorizer: ${authorizer}`];
+
+  const rootInv = entry.rootInvocation;
+  const fn = rootInv.function;
+  let rootDesc = "unknown";
+
+  if (fn.type === "sorobanAuthorizedFunctionTypeContractFn") {
+    const contractFn = fn.contractFn;
+    const contractId = Address.fromScAddress(contractFn.contractAddress).toString();
+    const fnName = contractFn.functionName.toString();
+    const args = contractFn.args.map((arg) => {
+      try {
+        const native = scValToNative(arg);
+        if (typeof native === "bigint") return `${native.toString()}n`;
+        return JSON.stringify(native);
+      } catch {
+        return arg.toXdr("base64");
+      }
+    });
+    rootDesc = `${contractId}.${fnName}(${args.join(", ")})`;
+  } else {
+    rootDesc = fn.type;
+  }
+
+  lines.push(`Root: ${rootDesc}`);
+
+  const subInvs = rootInv.subInvocations;
+  for (let i = 0; i < subInvs.length; i++) {
+    const sub = subInvs[i];
+    if (sub) {
+      lines.push(...describeInvocation(sub, "", i === subInvs.length - 1));
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/**
  * Checks a signed entry against the unsigned one it should be a signed copy of.
  * Signature validity itself is left to the network: simulating the finalized
  * transaction rejects a signature made with the wrong key.
@@ -148,9 +312,14 @@ export function checkSignedAuthEntry(
     return;
   }
 
-  if (!signed.rootInvocation.equals(original.rootInvocation)) {
-    throw new Error(`Authorization entry ${index} authorizes a different invocation than the one built`);
+  try {
+    checkInvocationTree(original.rootInvocation, signed.rootInvocation, "rootInvocation");
+  } catch (err: unknown) {
+    throw new Error(
+      `Authorization entry ${index} authorizes a different invocation than the one built: ${(err as Error).message}`,
+    );
   }
+
   const signedAddress = authEntryAddress(signed);
   if (signedAddress !== address) {
     throw new Error(`Authorization entry ${index} is for ${signedAddress ?? "the source account"}, not ${address}`);
@@ -179,3 +348,4 @@ export function checkSignedAuthEntry(
     );
   }
 }
+

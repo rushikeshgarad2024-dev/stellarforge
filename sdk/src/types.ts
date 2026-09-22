@@ -47,6 +47,7 @@ export interface ContractAddresses {
   registry?: string;
   compliance?: string;
   governance?: string;
+  vault?: string;
 }
 
 export interface StellarForgeConfig extends NetworkConfig {

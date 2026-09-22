@@ -99,6 +99,58 @@ Two things worth knowing before you use either:
 | `ComplianceClient` | `compliance` | `isCompliant` is the pure query, never the TTL-extending `screen`; `getKyc` reads a stored record. Admin: setKyc, revokeKyc |
 | `RegistryClient` | `registry` | Asset directory, paged with `listAssets(start, limit)` or walked with `listAllAssets()`; `register` and `setActive` are admin-only |
 | `GovernanceClient` | `governance` | Proposals and voting — **see the warning below** |
+| `VaultClient` | `vault` | Real estate / RWA share vault: config, balances, historical checkpoints, NAV, sponsored deposits/redeems, and typed event decoders |
+
+## Vault & Auth-Tree Verification
+
+`VaultClient` handles tokenized share vaults where users deposit underlying RWA tokens in exchange for vault shares:
+
+```typescript
+import {
+  VaultClient,
+  TESTNET_CONFIG,
+  sharesForDeposit,
+  underlyingForRedeem,
+  maxRedeemable,
+  describeAuthTree,
+  decodeVaultEvents,
+} from "@stellarforge-protocol/sdk";
+
+const client = new VaultClient({
+  ...TESTNET_CONFIG,
+  contracts: { vault: "C...", rwaAsset: "C..." },
+});
+
+// 1. Typed reads & NAV
+const config = await client.config();
+const navData = await client.nav(); // Throws NavRefusalError if oracles diverge or are stale
+const navPerShare = await client.navPerShare();
+
+// 2. Pure rounding and lockup checks
+const shares = sharesForDeposit(assets, config.exchangeRate);
+const redeemableBalance = maxRedeemable(userBalance, lockedUntilLedger, currentLedger);
+
+// 3. Sponsored deposit with auth-tree verification
+const sponsored = await client.buildSponsoredDepositTx(depositor, depositAmount, {
+  feeSource: relayer,
+});
+
+// The authorizer can inspect the entire nested call tree:
+// e.g. "Root: <vault>.deposit(depositor, amount) └── <rwa>.transfer(depositor, vault, amount)"
+console.log(describeAuthTree(sponsored.authEntries[0]));
+
+// Deep verification runs during finalizeSponsoredTx: verifies root calls AND
+// nested child invocations, refusing any tampering of amounts, contracts, or methods.
+const finalizedTx = await client.finalizeSponsoredTx(sponsored, signedEntries);
+
+// 4. Typed event decoding
+const events = decodeVaultEvents(txResult);
+for (const event of events) {
+  if (event.type === "deposit") {
+    console.log(`Deposited ${event.assets} assets for ${event.shares} shares by ${event.depositor}`);
+  }
+}
+```
 
 ## Sponsored writes
 
