@@ -44,6 +44,7 @@ const DEPOSITOR = DEPOSITOR_KP.publicKey();
 const RECIPIENT = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 12));
 const SPENDER = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 13));
 const ORACLE_ID = StrKey.encodeContract(Buffer.alloc(32, 14));
+const ADMIN = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 15));
 
 const vaultConfig = configWith(
   { vault: VAULT_ID, rwaAsset: RWA_ID },
@@ -719,22 +720,33 @@ describe("Auth-Tree Verification & describeAuthTree", () => {
 
 // ─── 5. Event Decoding ─────────────────────────────────────────────────────────
 
+// ─── 5. Event Decoding ─────────────────────────────────────────────────────────
+
 describe("Event Decoding", () => {
-  it("decodes parsed RPC deposit event", () => {
-    const rawRpcEvent = {
+  it("decodes real SDK Api.EventResponse for deposit (xdr.ScVal[] topics and xdr.ScVal value)", () => {
+    // Real shape returned by server.getEvents() per Api.EventResponse
+    const realRpcEvent = {
+      id: "0000000001-0000000001",
+      type: "contract",
       ledger: 42,
-      topic: ["Vault", "deposit", DEPOSITOR],
-      value: {
-        xdr: nativeToScVal({
-          caller: DEPOSITOR,
-          depositor: DEPOSITOR,
-          assets: 10_000_000n,
-          shares: 20_000_000n,
-        }).toXdr("base64"),
-      },
+      ledgerClosedAt: "2026-09-23T10:00:00Z",
+      contractId: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+      topic: [
+        xdr.ScVal.scvSymbol("Vault"),
+        xdr.ScVal.scvSymbol("deposit"),
+        new Address(DEPOSITOR).toScVal(),
+      ],
+      value: nativeToScVal({
+        caller: DEPOSITOR,
+        depositor: DEPOSITOR,
+        assets: 10_000_000n,
+        shares: 20_000_000n,
+      }),
+      inSuccessfulContractCall: true,
+      txHash: "1234567890abcdef",
     };
 
-    const decoded = decodeVaultEvent(rawRpcEvent);
+    const decoded = decodeVaultEvent(realRpcEvent);
     expect(decoded.type).toBe("deposit");
     if (decoded.type === "deposit") {
       expect(decoded.caller).toBe(DEPOSITOR);
@@ -745,23 +757,31 @@ describe("Event Decoding", () => {
     }
   });
 
-  it("decodes parsed RPC redeem event", () => {
-    const rawRpcEvent = {
+  it("decodes real SDK Api.EventResponse for redeem (xdr.ScVal[] topics and xdr.ScVal value)", () => {
+    const realRpcEvent = {
+      id: "0000000001-0000000002",
+      type: "contract",
       ledger: 43,
-      topic: ["Vault", "redeem", DEPOSITOR],
-      value: {
-        xdr: nativeToScVal({
-          caller: DEPOSITOR,
-          redeemer: DEPOSITOR,
-          shares: 20_000_000n,
-          assets: 10_000_000n,
-        }).toXdr("base64"),
-      },
+      ledgerClosedAt: "2026-09-23T10:00:00Z",
+      topic: [
+        xdr.ScVal.scvSymbol("Vault"),
+        xdr.ScVal.scvSymbol("redeem"),
+        new Address(DEPOSITOR).toScVal(),
+      ],
+      value: nativeToScVal({
+        caller: DEPOSITOR,
+        redeemer: DEPOSITOR,
+        shares: 20_000_000n,
+        assets: 10_000_000n,
+      }),
+      inSuccessfulContractCall: true,
+      txHash: "1234567890abcdef",
     };
 
-    const decoded = decodeVaultEvent(rawRpcEvent);
+    const decoded = decodeVaultEvent(realRpcEvent);
     expect(decoded.type).toBe("redeem");
     if (decoded.type === "redeem") {
+      expect(decoded.caller).toBe(DEPOSITOR);
       expect(decoded.redeemer).toBe(DEPOSITOR);
       expect(decoded.shares).toBe(20_000_000n);
       expect(decoded.assets).toBe(10_000_000n);
@@ -769,16 +789,23 @@ describe("Event Decoding", () => {
     }
   });
 
-  it("decodes parsed RPC transfer event", () => {
-    const rawRpcEvent = {
+  it("decodes real SDK Api.EventResponse for transfer (SEP-41)", () => {
+    const realRpcEvent = {
+      id: "0000000001-0000000003",
+      type: "contract",
       ledger: 44,
-      topic: ["transfer", DEPOSITOR, RECIPIENT],
-      value: {
-        xdr: nativeToScVal(1_000_000n, { type: "i128" }).toXdr("base64"),
-      },
+      ledgerClosedAt: "2026-09-23T10:00:00Z",
+      topic: [
+        xdr.ScVal.scvSymbol("transfer"),
+        new Address(DEPOSITOR).toScVal(),
+        new Address(RECIPIENT).toScVal(),
+      ],
+      value: nativeToScVal(1_000_000n, { type: "i128" }),
+      inSuccessfulContractCall: true,
+      txHash: "1234567890abcdef",
     };
 
-    const decoded = decodeVaultEvent(rawRpcEvent);
+    const decoded = decodeVaultEvent(realRpcEvent);
     expect(decoded.type).toBe("transfer");
     if (decoded.type === "transfer") {
       expect(decoded.from).toBe(DEPOSITOR);
@@ -788,35 +815,128 @@ describe("Event Decoding", () => {
     }
   });
 
+  it("decodes real SDK Api.EventResponse for approve (SEP-41)", () => {
+    const realRpcEvent = {
+      id: "0000000001-0000000004",
+      type: "contract",
+      ledger: 45,
+      ledgerClosedAt: "2026-09-23T10:00:00Z",
+      topic: [
+        xdr.ScVal.scvSymbol("approve"),
+        new Address(DEPOSITOR).toScVal(),
+        new Address(RECIPIENT).toScVal(),
+      ],
+      value: nativeToScVal([5_000_000n, 1000]),
+      inSuccessfulContractCall: true,
+      txHash: "1234567890abcdef",
+    };
+
+    const decoded = decodeVaultEvent(realRpcEvent);
+    expect(decoded.type).toBe("approve");
+    if (decoded.type === "approve") {
+      expect(decoded.from).toBe(DEPOSITOR);
+      expect(decoded.spender).toBe(RECIPIENT);
+      expect(decoded.amount).toBe(5_000_000n);
+      expect(decoded.liveUntilLedger).toBe(1000);
+      expect(decoded.ledger).toBe(45);
+    }
+  });
+
+  it("decodes real SDK Api.EventResponse for set_paused and set_oracles", () => {
+    const pausedEvent = {
+      ledger: 46,
+      topic: [xdr.ScVal.scvSymbol("Vault"), xdr.ScVal.scvSymbol("set_paused")],
+      value: nativeToScVal({ admin: ADMIN, paused: true }),
+    };
+    const decodedPaused = decodeVaultEvent(pausedEvent);
+    expect(decodedPaused.type).toBe("set_paused");
+    if (decodedPaused.type === "set_paused") {
+      expect(decodedPaused.admin).toBe(ADMIN);
+      expect(decodedPaused.paused).toBe(true);
+      expect(decodedPaused.ledger).toBe(46);
+    }
+
+    const oraclesEvent = {
+      ledger: 47,
+      topic: [xdr.ScVal.scvSymbol("Vault"), xdr.ScVal.scvSymbol("set_oracles")],
+      value: nativeToScVal({ admin: ADMIN, oracles: [DEPOSITOR] }),
+    };
+    const decodedOracles = decodeVaultEvent(oraclesEvent);
+    expect(decodedOracles.type).toBe("set_oracles");
+    if (decodedOracles.type === "set_oracles") {
+      expect(decodedOracles.admin).toBe(ADMIN);
+      expect(decodedOracles.oracles).toEqual([DEPOSITOR]);
+      expect(decodedOracles.ledger).toBe(47);
+    }
+  });
+
+  it("decodes raw base64 RPC event (Api.RawEventResponse)", () => {
+    const rawRpcEvent = {
+      ledger: 50,
+      topic: [
+        xdr.ScVal.scvSymbol("Vault").toXdr("base64"),
+        xdr.ScVal.scvSymbol("deposit").toXdr("base64"),
+        new Address(DEPOSITOR).toScVal().toXdr("base64"),
+      ],
+      value: nativeToScVal({
+        caller: DEPOSITOR,
+        depositor: DEPOSITOR,
+        assets: 5_000_000n,
+        shares: 10_000_000n,
+      }).toXdr("base64"),
+    };
+
+    const decoded = decodeVaultEvent(rawRpcEvent);
+    expect(decoded.type).toBe("deposit");
+    if (decoded.type === "deposit") {
+      expect(decoded.caller).toBe(DEPOSITOR);
+      expect(decoded.depositor).toBe(DEPOSITOR);
+      expect(decoded.assets).toBe(5_000_000n);
+      expect(decoded.shares).toBe(10_000_000n);
+      expect(decoded.ledger).toBe(50);
+    }
+  });
+
   it("returns unknown event for unrecognized topics instead of throwing", () => {
     const unknownEvent = {
       ledger: 10,
-      topic: ["SomethingElse", "custom"],
-      value: "AAAAAQ==",
+      topic: [xdr.ScVal.scvSymbol("SomethingElse"), xdr.ScVal.scvSymbol("custom")],
+      value: xdr.ScVal.scvU32(1),
     };
     const decoded = decodeVaultEvent(unknownEvent);
     expect(decoded.type).toBe("unknown");
   });
 
-  it("decodeVaultEvents decodes batch RPC getEvents response", () => {
-    const getEventsResponse = {
-      events: [
-        {
-          ledger: 100,
-          topic: ["transfer", DEPOSITOR, RECIPIENT],
-          value: { xdr: nativeToScVal(500n, { type: "i128" }).toXdr("base64") },
-        },
-        {
-          ledger: 101,
-          topic: ["UnknownTopic"],
-          value: "AAAA",
-        },
+  it("decodeVaultEvents decodes batch RPC getEvents response object or array", () => {
+    const event1 = {
+      ledger: 100,
+      topic: [
+        xdr.ScVal.scvSymbol("transfer"),
+        new Address(DEPOSITOR).toScVal(),
+        new Address(RECIPIENT).toScVal(),
       ],
+      value: nativeToScVal(500n, { type: "i128" }),
+    };
+    const event2 = {
+      ledger: 101,
+      topic: [xdr.ScVal.scvSymbol("UnknownTopic")],
+      value: xdr.ScVal.scvU32(0),
     };
 
-    const decoded = decodeVaultEvents(getEventsResponse);
-    expect(decoded).toHaveLength(2);
-    expect(decoded[0]?.type).toBe("transfer");
-    expect(decoded[1]?.type).toBe("unknown");
+    // Test with Api.GetEventsResponse shape ({ events: [...] })
+    const getEventsResponse = { events: [event1, event2] };
+    const decodedFromResponse = decodeVaultEvents(getEventsResponse);
+    expect(decodedFromResponse).toHaveLength(2);
+    expect(decodedFromResponse[0]?.type).toBe("transfer");
+    expect(decodedFromResponse[1]?.type).toBe("unknown");
+
+    // Test with direct array
+    const decodedFromArray = decodeVaultEvents([event1, event2]);
+    expect(decodedFromArray).toHaveLength(2);
+    expect(decodedFromArray[0]?.type).toBe("transfer");
+
+    // Test with empty/null
+    expect(decodeVaultEvents(null)).toEqual([]);
+    expect(decodeVaultEvents({})).toEqual([]);
   });
 });

@@ -144,7 +144,12 @@ console.log(describeAuthTree(sponsored.authEntries[0]));
 const finalizedTx = await client.finalizeSponsoredTx(sponsored, signedEntries);
 
 // 4. Typed event decoding
-const events = decodeVaultEvents(txResult);
+// Query events from RPC for the vault contract using txResult.ledger
+const eventsResponse = await server.getEvents({
+  startLedger: txResult.ledger,
+  filters: [{ type: "contract", contractIds: [config.contracts.vault] }],
+});
+const events = decodeVaultEvents(eventsResponse);
 for (const event of events) {
   if (event.type === "deposit") {
     console.log(`Deposited ${event.assets} assets for ${event.shares} shares by ${event.depositor}`);

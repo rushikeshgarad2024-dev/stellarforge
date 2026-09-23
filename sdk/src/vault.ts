@@ -233,166 +233,185 @@ export function maxRedeemable(balance: bigint, lockedUntil: number, currentLedge
 
 /**
  * Decodes a raw Soroban contract event into a strongly-typed `VaultEvent`.
+ *
+ * Fully supports:
+ * 1. `@stellar/stellar-sdk` `rpc.Api.EventResponse` from `server.getEvents()` (`topic: xdr.ScVal[]`, `value: xdr.ScVal`).
+ * 2. `@stellar/stellar-sdk` `rpc.Api.RawEventResponse` (`topic?: string[]` base64 XDR, `value: string` base64 XDR).
+ * 3. Soroban `xdr.ContractEvent` or `xdr.DiagnosticEvent` directly.
+ * 4. Custom/simulated event objects with string or ScVal topics and values.
+ *
  * Returns `{ type: "unknown" }` rather than throwing if the event does not match
  * expected vault schemas.
  *
- * @param event - The contract event (from simulation, XDR, or RPC getEvents).
+ * @param event - The contract event (from RPC getEvents, simulation, or XDR).
  * @returns Discriminated union of typed vault events.
  */
 export function decodeVaultEvent(event: unknown): VaultEvent {
   try {
-    const raw = event as {
-      type?: string;
-      ledger?: number;
-      topic?: string[];
-      value?: { xdr?: string } | string;
-      event?: { topics?: () => xdr.ScVal[]; data?: () => xdr.ScVal };
-    };
-
-    const ledger = raw.ledger ?? 0;
-
-    // Handle parsed RPC getEvents format: topics as array of string / ScVal
-    if (raw.topic && Array.isArray(raw.topic) && raw.topic.length > 0) {
-      const topic0 = raw.topic[0];
-
-      if (topic0 === "transfer" && raw.topic.length >= 3) {
-        const from = raw.topic[1] ?? "";
-        const to = raw.topic[2] ?? "";
-        let amount = 0n;
-        if (typeof raw.value === "string") {
-          const scv = xdr.ScVal.fromXdr(raw.value, "base64");
-          amount = scValToNative(scv) as bigint;
-        } else if (raw.value?.xdr) {
-          const scv = xdr.ScVal.fromXdr(raw.value.xdr, "base64");
-          amount = scValToNative(scv) as bigint;
-        }
-        return { type: "transfer", from, to, amount, ledger };
-      }
-
-      if (topic0 === "Vault" && raw.topic.length >= 2) {
-        const action = raw.topic[1];
-        let nativeVal: Record<string, unknown> = {};
-        if (typeof raw.value === "string") {
-          nativeVal = scValToNative(xdr.ScVal.fromXdr(raw.value, "base64")) as Record<string, unknown>;
-        } else if (raw.value?.xdr) {
-          nativeVal = scValToNative(xdr.ScVal.fromXdr(raw.value.xdr, "base64")) as Record<string, unknown>;
-        }
-
-        if (action === "deposit") {
-          return {
-            type: "deposit",
-            caller: (nativeVal["caller"] as string) ?? (raw.topic[2] as string) ?? "",
-            depositor: (nativeVal["depositor"] as string) ?? (raw.topic[2] as string) ?? "",
-            assets: (nativeVal["assets"] as bigint) ?? 0n,
-            shares: (nativeVal["shares"] as bigint) ?? 0n,
-            ledger,
-          };
-        }
-
-        if (action === "redeem") {
-          return {
-            type: "redeem",
-            caller: (nativeVal["caller"] as string) ?? (raw.topic[2] as string) ?? "",
-            redeemer: (nativeVal["redeemer"] as string) ?? (raw.topic[2] as string) ?? "",
-            shares: (nativeVal["shares"] as bigint) ?? 0n,
-            assets: (nativeVal["assets"] as bigint) ?? 0n,
-            ledger,
-          };
-        }
-
-        if (action === "set_paused") {
-          return {
-            type: "set_paused",
-            admin: (nativeVal["admin"] as string) ?? "",
-            paused: Boolean(nativeVal["paused"]),
-            ledger,
-          };
-        }
-
-        if (action === "set_oracles") {
-          return {
-            type: "set_oracles",
-            admin: (nativeVal["admin"] as string) ?? "",
-            oracles: (nativeVal["oracles"] as string[]) ?? [],
-            ledger,
-          };
-        }
-      }
+    if (!event || typeof event !== "object") {
+      return { type: "unknown", raw: event };
     }
 
-    // Handle xdr.ContractEvent or xdr.DiagnosticEvent
-    const contractEvent = (event as { event?: xdr.ContractEvent }).event ?? (event as xdr.ContractEvent);
-    if (contractEvent?.type && contractEvent.body) {
-      const v0 = contractEvent.body.v0;
-      const topics = v0.topics.map((t: xdr.ScVal) => scValToNative(t));
-      const nativeData = scValToNative(v0.data);
+    const raw = event as Record<string, unknown>;
+    const ledger = typeof raw["ledger"] === "number" ? raw["ledger"] : 0;
 
-      if (topics[0] === "transfer" && topics.length >= 3) {
-        return {
-          type: "transfer",
-          from: String(topics[1]),
-          to: String(topics[2]),
-          amount: typeof nativeData === "bigint" ? nativeData : BigInt(String(nativeData)),
-          ledger,
-        };
-      }
+    // 1. Extract raw topics and raw value from either EventResponse, RawEventResponse, or ContractEvent
+    let rawTopics: unknown[] = [];
+    let rawValue: unknown = undefined;
 
-      if (topics[0] === "approve" && topics.length >= 3) {
-        const dataObj = nativeData as Record<string, unknown>;
-        return {
-          type: "approve",
-          from: String(topics[1]),
-          spender: String(topics[2]),
-          amount: (dataObj["amount"] as bigint) ?? 0n,
-          liveUntilLedger: Number(dataObj["live_until_ledger"] ?? 0),
-          ledger,
-        };
-      }
+    const contractEvent =
+      (raw["event"] as { body?: xdr.ContractEventBody } | undefined) ??
+      (raw as { body?: xdr.ContractEventBody });
+    if (contractEvent?.body?.v0) {
+      rawTopics = contractEvent.body.v0.topics;
+      rawValue = contractEvent.body.v0.data;
+    } else if (Array.isArray(raw["topic"])) {
+      rawTopics = raw["topic"];
+      rawValue = raw["value"];
+    } else if (Array.isArray(raw["topics"])) {
+      rawTopics = raw["topics"];
+      rawValue = raw["value"] ?? raw["data"];
+    }
 
-      if (topics[0] === "Vault") {
-        const action = String(topics[1]);
-        const dataObj = (nativeData as Record<string, unknown>) ?? {};
+    if (rawTopics.length === 0) {
+      return { type: "unknown", raw: event };
+    }
 
-        if (action === "deposit") {
-          return {
-            type: "deposit",
-            caller: String(dataObj["caller"] ?? topics[2] ?? ""),
-            depositor: String(dataObj["depositor"] ?? topics[2] ?? ""),
-            assets: BigInt(String(dataObj["assets"] ?? 0)),
-            shares: BigInt(String(dataObj["shares"] ?? 0)),
-            ledger,
-          };
-        }
-
-        if (action === "redeem") {
-          return {
-            type: "redeem",
-            caller: String(dataObj["caller"] ?? topics[2] ?? ""),
-            redeemer: String(dataObj["redeemer"] ?? topics[2] ?? ""),
-            shares: BigInt(String(dataObj["shares"] ?? 0)),
-            assets: BigInt(String(dataObj["assets"] ?? 0)),
-            ledger,
-          };
-        }
-
-        if (action === "set_paused") {
-          return {
-            type: "set_paused",
-            admin: String(dataObj["admin"] ?? ""),
-            paused: Boolean(dataObj["paused"]),
-            ledger,
-          };
-        }
-
-        if (action === "set_oracles") {
-          return {
-            type: "set_oracles",
-            admin: String(dataObj["admin"] ?? ""),
-            oracles: Array.isArray(dataObj["oracles"]) ? dataObj["oracles"].map(String) : [],
-            ledger,
-          };
+    // 2. Normalize each topic to native JS (strings, addresses, symbols)
+    const topics: unknown[] = rawTopics.map((t: unknown) => {
+      if (t instanceof xdr.ScVal || (t && typeof (t as { switch?: unknown }).switch === "function")) {
+        try {
+          return scValToNative(t as xdr.ScVal);
+        } catch {
+          return t;
         }
       }
+      if (typeof t === "string") {
+        try {
+          const scv = xdr.ScVal.fromXdr(t, "base64");
+          return scValToNative(scv);
+        } catch {
+          return t;
+        }
+      }
+      return t;
+    });
+
+    // 3. Normalize value to native JS
+    let nativeVal: unknown = undefined;
+    if (rawValue instanceof xdr.ScVal || (rawValue && typeof (rawValue as { switch?: unknown }).switch === "function")) {
+      try {
+        nativeVal = scValToNative(rawValue as xdr.ScVal);
+      } catch {
+        nativeVal = rawValue;
+      }
+    } else if (typeof rawValue === "string") {
+      try {
+        const scv = xdr.ScVal.fromXdr(rawValue, "base64");
+        nativeVal = scValToNative(scv);
+      } catch {
+        nativeVal = rawValue;
+      }
+    } else if (rawValue && typeof (rawValue as { xdr?: unknown }).xdr === "string") {
+      try {
+        const scv = xdr.ScVal.fromXdr((rawValue as { xdr: string }).xdr, "base64");
+        nativeVal = scValToNative(scv);
+      } catch {
+        nativeVal = rawValue;
+      }
+    } else {
+      nativeVal = rawValue;
+    }
+
+    const topic0 = String(topics[0] ?? "");
+
+    // ─── Transfer Event (SEP-41) ─────────────────────────────────────────────
+    // Topics: ["transfer", from, to]
+    if (topic0 === "transfer" && topics.length >= 3) {
+      const from = String(topics[1] ?? "");
+      const to = String(topics[2] ?? "");
+      let amount = 0n;
+      if (typeof nativeVal === "bigint") {
+        amount = nativeVal;
+      } else if (typeof nativeVal === "number") {
+        amount = BigInt(nativeVal);
+      } else if (nativeVal && typeof nativeVal === "object") {
+        const valObj = nativeVal as Record<string, unknown>;
+        if (typeof valObj["amount"] === "bigint") {
+          amount = valObj["amount"];
+        } else if (typeof valObj["amount"] === "number" || typeof valObj["amount"] === "string") {
+          amount = BigInt(valObj["amount"]);
+        }
+      }
+      return { type: "transfer", from, to, amount, ledger };
+    }
+
+    // ─── Approve Event (SEP-41) ──────────────────────────────────────────────
+    // Topics: ["approve", from/owner, spender]
+    if (topic0 === "approve" && topics.length >= 3) {
+      const from = String(topics[1] ?? "");
+      const spender = String(topics[2] ?? "");
+      let amount = 0n;
+      let liveUntilLedger = 0;
+      if (Array.isArray(nativeVal)) {
+        amount = typeof nativeVal[0] === "bigint" ? nativeVal[0] : BigInt(nativeVal[0] ?? 0);
+        liveUntilLedger = Number(nativeVal[1] ?? 0);
+      } else if (nativeVal && typeof nativeVal === "object") {
+        const valObj = nativeVal as Record<string, unknown>;
+        amount =
+          typeof valObj["amount"] === "bigint"
+            ? valObj["amount"]
+            : BigInt((valObj["amount"] as string | number) ?? 0);
+        liveUntilLedger = Number(valObj["live_until_ledger"] ?? valObj["liveUntilLedger"] ?? 0);
+      }
+      return { type: "approve", from, spender, amount, liveUntilLedger, ledger };
+    }
+
+    // ─── Vault Events ────────────────────────────────────────────────────────
+    // Topics: ["Vault", action, ...] or [action, ...]
+    const isVaultNamespace = topic0 === "Vault";
+    const action = isVaultNamespace ? String(topics[1] ?? "") : topic0;
+    const dataObj =
+      (nativeVal && typeof nativeVal === "object" ? nativeVal : {}) as Record<string, unknown>;
+
+    if (action === "deposit") {
+      const caller = String(dataObj["caller"] ?? (isVaultNamespace ? topics[2] : topics[1]) ?? "");
+      const depositor = String(dataObj["depositor"] ?? (isVaultNamespace ? topics[2] : topics[1]) ?? "");
+      const assets =
+        typeof dataObj["assets"] === "bigint"
+          ? dataObj["assets"]
+          : BigInt(String(dataObj["assets"] ?? 0));
+      const shares =
+        typeof dataObj["shares"] === "bigint"
+          ? dataObj["shares"]
+          : BigInt(String(dataObj["shares"] ?? 0));
+      return { type: "deposit", caller, depositor, assets, shares, ledger };
+    }
+
+    if (action === "redeem") {
+      const caller = String(dataObj["caller"] ?? (isVaultNamespace ? topics[2] : topics[1]) ?? "");
+      const redeemer = String(dataObj["redeemer"] ?? (isVaultNamespace ? topics[2] : topics[1]) ?? "");
+      const shares =
+        typeof dataObj["shares"] === "bigint"
+          ? dataObj["shares"]
+          : BigInt(String(dataObj["shares"] ?? 0));
+      const assets =
+        typeof dataObj["assets"] === "bigint"
+          ? dataObj["assets"]
+          : BigInt(String(dataObj["assets"] ?? 0));
+      return { type: "redeem", caller, redeemer, shares, assets, ledger };
+    }
+
+    if (action === "set_paused" || action === "paused") {
+      const admin = String(dataObj["admin"] ?? "");
+      const paused = typeof nativeVal === "boolean" ? nativeVal : Boolean(dataObj["paused"]);
+      return { type: "set_paused", admin, paused, ledger };
+    }
+
+    if (action === "set_oracles") {
+      const admin = String(dataObj["admin"] ?? "");
+      const oracles = Array.isArray(dataObj["oracles"]) ? dataObj["oracles"].map(String) : [];
+      return { type: "set_oracles", admin, oracles, ledger };
     }
 
     return { type: "unknown", raw: event };
@@ -402,17 +421,28 @@ export function decodeVaultEvent(event: unknown): VaultEvent {
 }
 
 /**
- * Decodes all events from an RPC `getEvents` response into an array of `VaultEvent`.
+ * Decodes all events from an RPC `getEvents` response or an event collection into an array of `VaultEvent`.
  *
- * @param getEventsResponse - The response object returned by `server.getEvents()`.
+ * Accepts:
+ * - `rpc.Api.GetEventsResponse` or `rpc.Api.RawGetEventsResponse` (`{ events: EventResponse[] }`)
+ * - An array of events (`EventResponse[]` or `RawEventResponse[]`)
+ * - A transaction result containing `events`
+ *
+ * @param getEventsResponse - The response object returned by `server.getEvents()` or array of events.
  * @returns Array of decoded vault events.
  */
 export function decodeVaultEvents(getEventsResponse: unknown): VaultEvent[] {
-  const resp = getEventsResponse as { events?: unknown[] };
-  if (!resp || !Array.isArray(resp.events)) {
+  if (!getEventsResponse) {
     return [];
   }
-  return resp.events.map(decodeVaultEvent);
+  if (Array.isArray(getEventsResponse)) {
+    return getEventsResponse.map(decodeVaultEvent);
+  }
+  const resp = getEventsResponse as { events?: unknown[] };
+  if (resp && Array.isArray(resp.events)) {
+    return resp.events.map(decodeVaultEvent);
+  }
+  return [];
 }
 
 // ─── VaultClient ───────────────────────────────────────────────────────────────
